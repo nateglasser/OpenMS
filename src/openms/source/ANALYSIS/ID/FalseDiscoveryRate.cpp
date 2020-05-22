@@ -2,7 +2,7 @@
 //                   OpenMS -- Open-Source Mass Spectrometry
 // --------------------------------------------------------------------------
 // Copyright The OpenMS Team -- Eberhard Karls University Tuebingen,
-// ETH Zurich, and Freie Universitaet Berlin 2002-2018.
+// ETH Zurich, and Freie Universitaet Berlin 2002-2020.
 //
 // This software is released under a three-clause BSD license:
 //  * Redistributions of source code must retain the above copyright
@@ -63,6 +63,8 @@ namespace OpenMS
     defaults_.setValidStrings("add_decoy_proteins", ListUtils::create<String>("true,false"));
     defaults_.setValue("conservative", "true", "If 'true' (D+1)/T instead of (D+1)/(T+D) is used as a formula.");
     defaults_.setValidStrings("conservative", ListUtils::create<String>("true,false"));
+    //defaults_.setValue("equality_epsilon", 0, "The epsilon under which two scores are considered equal.");
+    //defaults_.setMinFloat("equality_epsilon", 0.0);
     defaultsToParam_();
 
   }
@@ -597,12 +599,10 @@ namespace OpenMS
     fdr_score.higher_better = false;
     if (use_qvalue)
     {
-      fdr_score.name = "q-value";
       fdr_score.cv_term = CVTerm("MS:1002354", "PSM-level q-value", "MS");
     }
     else
     {
-      fdr_score.name = "FDR";
       fdr_score.cv_term = CVTerm("MS:1002355", "PSM-level FDRScore", "MS");
     }
     IdentificationData::ScoreTypeRef fdr_ref =
@@ -852,7 +852,7 @@ namespace OpenMS
       std::sort(scores_labels.begin(), scores_labels.end());
     }
     // if fp_cutoff is zero do the full AUC.
-    return rocN_(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
+    return rocN(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
   }
 
   double FalseDiscoveryRate::rocN(const vector<PeptideIdentification>& ids, Size fp_cutoff, const String& identifier) const
@@ -877,12 +877,22 @@ namespace OpenMS
       std::sort(scores_labels.begin(), scores_labels.end());
     }
     // if fp_cutoff is zero do the full AUC.
-    return rocN_(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
+    return rocN(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
   }
 
   double FalseDiscoveryRate::rocN(const ConsensusMap& ids, Size fp_cutoff) const
   {
-    bool higher_score_better(ids[0].getPeptideIdentifications().begin()->isHigherScoreBetter());
+    bool higher_score_better(false);
+    // Check first ID in a feature for the score orientation.
+    for (const auto& f : ids)
+    {
+      const auto& pepids = f.getPeptideIdentifications();
+      if (!pepids.empty())
+      {
+        higher_score_better = pepids[0].isHigherScoreBetter();
+        break;
+      }
+    }
     bool use_all_hits = param_.getValue("use_all_hits").toBool();
 
     ScoreToTgtDecLabelPairs scores_labels;
@@ -902,7 +912,7 @@ namespace OpenMS
       std::sort(scores_labels.begin(), scores_labels.end());
     }
     // if fp_cutoff is zero do the full AUC.
-    return rocN_(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
+    return rocN(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
   }
 
   double FalseDiscoveryRate::rocN(const ConsensusMap& ids, Size fp_cutoff, const String& identifier) const
@@ -927,7 +937,7 @@ namespace OpenMS
       std::sort(scores_labels.begin(), scores_labels.end());
     }
     // if fp_cutoff is zero do the full AUC.
-    return rocN_(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
+    return rocN(scores_labels, fp_cutoff == 0 ? scores_labels.size() : fp_cutoff);
   }
 
   //TODO implement per charge estimation
@@ -1143,7 +1153,8 @@ namespace OpenMS
     ScoreToTgtDecLabelPairs scores_labels;
     IDScoreGetterSetter::getScores_(scores_labels, ids[0]);
     std::sort(scores_labels.rbegin(), scores_labels.rend());
-    return diffEstimatedEmpirical_(scores_labels, pepCutoff) * diffWeight + rocN_(scores_labels, fpCutoff) * (1 - diffWeight);
+    return diffEstimatedEmpirical(scores_labels, pepCutoff) * diffWeight +
+        rocN(scores_labels, fpCutoff) * (1 - diffWeight);
   }
 
   double FalseDiscoveryRate::applyEvaluateProteinIDs(const ProteinIdentification& ids, double pepCutoff, UInt fpCutoff, double diffWeight)
@@ -1156,8 +1167,19 @@ namespace OpenMS
     ScoreToTgtDecLabelPairs scores_labels;
     IDScoreGetterSetter::getScores_(scores_labels, ids);
     std::sort(scores_labels.rbegin(), scores_labels.rend());
-    double diff = diffEstimatedEmpirical_(scores_labels, pepCutoff);
-    double auc = rocN_(scores_labels, fpCutoff);
+    double diff = diffEstimatedEmpirical(scores_labels, pepCutoff);
+    double auc = rocN(scores_labels, fpCutoff);
+    OPENMS_LOG_INFO << "Evaluation of protein probabilities: Difference estimated vs. T-D FDR = " << diff << " and roc" << fpCutoff << " = " << auc << std::endl;
+    // we want the score to get higher the lesser the difference. Subtract from one.
+    // Then convex combination with the AUC.
+    return (1.0 - diff) * (1.0 - diffWeight) + auc * diffWeight;
+  }
+
+  double FalseDiscoveryRate::applyEvaluateProteinIDs(ScoreToTgtDecLabelPairs& scores_labels, double pepCutoff, UInt fpCutoff, double diffWeight)
+  {
+    std::sort(scores_labels.rbegin(), scores_labels.rend());
+    double diff = diffEstimatedEmpirical(scores_labels, pepCutoff);
+    double auc = rocN(scores_labels, fpCutoff);
     OPENMS_LOG_INFO << "Evaluation of protein probabilities: Difference estimated vs. T-D FDR = " << diff << " and roc" << fpCutoff << " = " << auc << std::endl;
     // we want the score to get higher the lesser the difference. Subtract from one.
     // Then convex combination with the AUC.
@@ -1165,7 +1187,7 @@ namespace OpenMS
   }
 
   //TODO the following two methods assume sortedness. Add precondition and/or doxygen comment
-  double FalseDiscoveryRate::diffEstimatedEmpirical_(const ScoreToTgtDecLabelPairs& scores_labels, double pepCutoff) const
+  double FalseDiscoveryRate::diffEstimatedEmpirical(const ScoreToTgtDecLabelPairs& scores_labels, double pepCutoff) const
   {
     bool conservative = param_.getValue("conservative").toBool();
     if (scores_labels.empty())
@@ -1191,7 +1213,14 @@ namespace OpenMS
         est = pepSum / (truePos + falsePos);
         if (conservative)
         {
-          emp = static_cast<double>(falsePos) / (truePos);
+          if (truePos == 0.)
+          {
+            emp = 1.;
+          }
+          else
+          {
+            emp = static_cast<double>(falsePos) / (truePos);
+          }
         }
         else
         {
@@ -1220,7 +1249,7 @@ namespace OpenMS
     return diffArea;
   }
 
-  double FalseDiscoveryRate::rocN_(const ScoreToTgtDecLabelPairs& scores_labels, Size fpCutoff) const
+  double FalseDiscoveryRate::rocN(const ScoreToTgtDecLabelPairs& scores_labels, Size fpCutoff) const
   {
     if (scores_labels.empty())
     {
@@ -1336,7 +1365,7 @@ namespace OpenMS
     bool conservative = param_.getValue("conservative").toBool();
     if (scores_labels.empty())
     {
-     OPENMS_LOG_WARN << "Warning: No scores extracted for FDR calculation. Skipping. Do you have target-decoy annotated Hits?" << std::endl;
+      OPENMS_LOG_WARN << "Warning: No scores extracted for FDR calculation. Skipping. Do you have target-decoy annotated Hits?" << std::endl;
       return;
     }
 

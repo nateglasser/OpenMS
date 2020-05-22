@@ -54,12 +54,15 @@ cdef extern from "<OpenMS/KERNEL/MSSpectrum.h>" namespace "OpenMS":
         int findNearest(double) nogil except+
         int findNearest(double, double) nogil except+
         int findNearest(double, double, double) nogil except+
+        int findHighestInWindow(double, double, double) nogil except+
 
         MSSpectrum select(libcpp_vector[ size_t ] & indices) nogil except +
 
         void assign(libcpp_vector[Peak1D].iterator, libcpp_vector[Peak1D].iterator) nogil except + # wrap-ignore
         libcpp_vector[Peak1D].iterator begin() nogil except +  # wrap-iter-begin:__iter__(Peak1D)
         libcpp_vector[Peak1D].iterator end()   nogil except +  # wrap-iter-end:__iter__(Peak1D)
+
+        double getTIC() nogil except +
 
         bool operator==(MSSpectrum) nogil except +
         bool operator!=(MSSpectrum) nogil except +

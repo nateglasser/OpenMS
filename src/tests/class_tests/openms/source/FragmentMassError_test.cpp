@@ -2,7 +2,7 @@
 //           OpenMS -- Open-Source Mass Spectrometry
 // --------------------------------------------------------------------------
 // Copyright The OpenMS Team -- Eberhard Karls University Tuebingen,
-// ETH Zurich, and Freie Universitaet Berlin 2002-2018.
+// ETH Zurich, and Freie Universitaet Berlin 2002-2020.
 //
 // This software is released under a three-clause BSD license:
 //  * Redistributions of source code must retain the above copyright
@@ -36,15 +36,11 @@
 #include <OpenMS/test_config.h>
 
 ///////////////////////////
+#include <OpenMS/QC/FragmentMassError.h>
 
 #include <OpenMS/CHEMISTRY/TheoreticalSpectrumGenerator.h>
 #include <OpenMS/KERNEL/FeatureMap.h>
-#include <OpenMS/KERNEL/MSExperiment.h>
 #include <OpenMS/MATH/MISC/MathFunctions.h>
-#include <OpenMS/METADATA/MetaInfoInterface.h>
-#include <OpenMS/METADATA/PeptideHit.h>
-#include <OpenMS/QC/FragmentMassError.h>
-#include <vector>
 //////////////////////////
 
 using namespace OpenMS;
@@ -198,9 +194,22 @@ START_TEST(FragmentMassError, "$Id$")
     //--------------------------------------------------------------------
 
     // featureMap with missing ProteinIdentifications
-    FeatureMap fmap_auto;
-
-    TEST_EXCEPTION_WITH_MESSAGE(Exception::MissingInformation, frag_ma_err.compute(fmap_auto, exp, spectra_map, FragmentMassError::ToleranceUnit::AUTO), "There is no information about fragment mass tolerance given in the FeatureXML. Please choose a fragment_mass_unit")
+    {
+      FeatureMap fmap_auto = fmap;
+      fmap_auto.getProteinIdentifications().clear();
+      TEST_EXCEPTION(Exception::MissingInformation, frag_ma_err.compute(fmap_auto, exp, spectra_map, FragmentMassError::ToleranceUnit::AUTO))
+    }
+    
+    //--------------------------------------------------------------------
+    // test with no given fragmentation method
+    //--------------------------------------------------------------------
+    // create MSExperiment with no given fragmentation method
+    exp[0].setPrecursors({});
+    // falls back to CID
+    spectra_map.calculateMap(exp);
+    frag_ma_err.compute(fmap, exp, spectra_map);
+    TEST_REAL_SIMILAR(frag_ma_err.getResults()[1].average_ppm, 5.0)
+    TEST_REAL_SIMILAR(frag_ma_err.getResults()[1].variance_ppm, 0.0)  // offset is constant, i.e. no variance
 
     //--------------------------------------------------------------------
     // test with matching ms1 spectrum
@@ -214,23 +223,6 @@ START_TEST(FragmentMassError, "$Id$")
     spectra_map.calculateMap(exp);
 
     TEST_EXCEPTION_WITH_MESSAGE(Exception::IllegalArgument, frag_ma_err.compute(fmap, exp, spectra_map), "The matching spectrum of the mzML is not an MS2 Spectrum.")
-
-    //--------------------------------------------------------------------
-    // test with no given fragmentation method
-    //--------------------------------------------------------------------
-
-    // put PeptideIdentification with RT matching to MSSpectrum without given fragmentation method to fmap
-    fmap.setUnassignedPeptideIdentifications({createPeptideIdentification("XTandem::4")});
-
-    // create MSExperiment with no given fragmentation method
-    MSSpectrum ms_spec_2_no_precursor;
-    ms_spec_2_no_precursor.setRT(8);
-    ms_spec_2_no_precursor.setMSLevel(2);
-    ms_spec_2_no_precursor.setNativeID("XTandem::4");
-    exp.setSpectra({ms_spec_2_no_precursor});
-    spectra_map.calculateMap(exp);
-
-    TEST_EXCEPTION_WITH_MESSAGE(Exception::MissingInformation, frag_ma_err.compute(fmap, exp, spectra_map), "No fragmentation method given.")
 
     //--------------------------------------------------------------------
     // test with fragmentation method SORI, which is not supported

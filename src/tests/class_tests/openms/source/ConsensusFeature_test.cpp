@@ -2,7 +2,7 @@
 //                   OpenMS -- Open-Source Mass Spectrometry
 // --------------------------------------------------------------------------
 // Copyright The OpenMS Team -- Eberhard Karls University Tuebingen,
-// ETH Zurich, and Freie Universitaet Berlin 2002-2018.
+// ETH Zurich, and Freie Universitaet Berlin 2002-2020.
 //
 // This software is released under a three-clause BSD license:
 //  * Redistributions of source code must retain the above copyright
@@ -201,9 +201,13 @@ END_SECTION
 
 START_SECTION((ConsensusFeature(ConsensusFeature &&rhs)))
 {
+#ifndef OPENMS_COMPILER_MSVC
   // Ensure that ConsensusFeature has a no-except move constructor (otherwise
   // std::vector is inefficient and will copy instead of move).
+  // Note that MSVS does not support noexcept move constructors for STL
+  // constructs such as std::map.
   TEST_EQUAL(noexcept(ConsensusFeature(std::declval<ConsensusFeature&&>())), true)
+#endif
 
   ConsensusFeature cons(tmp_feature);
   cons.insert(1,tmp_feature);
